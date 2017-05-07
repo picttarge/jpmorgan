@@ -1,0 +1,213 @@
+/**
+ * TODO: Company copyright/licence notice
+ */
+package com.jpmorgan.dtre;
+
+import java.math.BigDecimal;
+import java.text.NumberFormat;
+import java.time.LocalDate;
+import java.util.*;
+import java.util.stream.Collectors;
+
+/**
+ * Daily Trade Reporting Engine to process instructions sent by various clients
+ * to JP Morgan to execute in the international market.
+ *
+ * https://gist.github.com/bgun/c7447ab0906517221b6b
+ * git@github.com:picttarge/jpmorgan.git
+ *
+ * Guidelines:
+ * - No database or UI is required.
+ * - Assume the code will only ever be executed in a single threaded environment.
+ * - Minimise the number of external jar dependencies the code has.
+ * - All data to be in memory.
+ * - Output format to be plain text, printed out to the console.
+ *
+ * Sample data:
+ * Entity | Buy/Sell |  AgreedFx | Currency | InstructionDate | C | Units |  Price per unit
+ *  foo   |    B     |    0.50   |   SGP    |   01 Jan 2016   |   02 Jan 2016  |  200  |     100.25
+ *  bar   |    S     |    0.22   |   AED    |   05 Jan 2016   |   07 Jan 2016  |  450  |     150.5
+ *
+ * Logic:
+ * - A work week starts Monday and ends Friday, unless the currency of the trade is AED or SAR, where
+ *   the work week starts Sunday and ends Thursday. No other holidays to be taken into account.
+ * - A trade can only be settled on a working day.
+ * - If an instructed settlement date falls on a weekend, then the settlement date should be changed to
+ *   the next working day.
+ * - USD amount of a trade = Price per unit * Units * Agreed Fx
+ *
+ * Reporting requirements:
+ * - Amount in USD settled incoming everyday
+ * - Amount in USD settled outgoing everyday
+ * - Ranking of entities based on incoming and outgoing amount. Eg: If entity foo instructs the highest
+ *   amount for a buy instruction, then foo is rank 1 for outgoing
+ *
+ * Glossary:
+ * - Instruction: An instruction to buy or sell
+ * - Entity: A financial entity whose shares are to be bought or sold
+ * - Instruction Date: Date on which the instruction was sent to JP Morgan by various clients
+ * - Settlement Date: The date on which the client wished for the instruction to be settled with respect
+ *                    to Instruction Date
+ * - Buy/Sell flag:
+ *     B – Buy – outgoing
+ *     S – Sell – incoming
+ * - Agreed Fx is the foreign exchange rate with respect to USD that was agreed
+ * - Units: Number of shares to be bought or sold
+ *
+ * Author notes:
+ *   - Use BigDecimal to represent currency, never float or double types
+ *   - Reporting engine indicates this is to process the instruction data (perhaps from a DB ultimately)
+ *     and possibly offline as a batch job, rather than service user requests
+ *   -
+ * @author Peter D Bell, 5rd May 2017
+ */
+public class DailyTrades {
+
+    private final DataSource ds;
+    /** Number format for US, for presentation layer */
+    private final NumberFormat nf = NumberFormat.getCurrencyInstance(Locale.US);
+
+    public DailyTrades() {
+        ds = DataSource.getInstance();
+    }
+
+    public static void main (String[] a) {
+        System.out.println("Daily Trade Reporting Engine");
+
+        final DailyTrades dt = new DailyTrades();
+        dt.reports();
+
+        System.exit(0);
+    }
+
+    public void reports() {
+        incomingSettledUSDDaily();
+        outgoingSettledUSDDaily();
+        rank();
+    }
+
+    /**
+     * Incoming = Sell orders
+     */
+    void incomingSettledUSDDaily() {
+        final Set<ImmutableInstruction> sellOrders = ds.getRows()
+                .stream()
+                .filter(r -> r.getBuySell() == ImmutableInstruction.BUYSELL.S)
+                // it would be nice to use mapToDouble (or ideally a new mapToBigDecimal) at this point, but we can't
+                // so we drop the java 8 lambda aggregation and process individual BigDecimal objects, otherwise
+                // we risk losing either precision or number of digits
+                // so just collect, don't map and aggregate (yet)
+                .collect(Collectors.toSet());
+
+        System.out.println("=== Amount in USD settled incoming (Sell) every day ===");
+        aggregateSumPerDay(sellOrders);
+    }
+
+    /**
+     * Outgoing = Buy orders
+     */
+    void outgoingSettledUSDDaily() {
+        final Set<ImmutableInstruction> buyOrders = ds.getRows()
+                .stream()
+                .filter(r -> r.getBuySell() == ImmutableInstruction.BUYSELL.B)
+                // it would be nice to use mapToDouble (or ideally a new mapToBigDecimal) at this point, but we can't
+                // so we drop the java 8 lambda aggregation and process individual BigDecimal objects, otherwise
+                // we risk losing either precision or number of digits
+                // so just collect, don't map and aggregate (yet)
+                .collect(Collectors.toSet());
+
+        System.out.println("=== Amount in USD settled outgoing (Buy) every day ===");
+        aggregateSumPerDay(buyOrders);
+    }
+
+    void rank() {
+        final Set<ImmutableInstruction> sellOrders = ds.getRows()
+                .stream()
+                .filter(r -> r.getBuySell() == ImmutableInstruction.BUYSELL.S)
+                // it would be nice to use mapToDouble (or ideally a new mapToBigDecimal) at this point, but we can't
+                // so we drop the java 8 lambda aggregation and process individual BigDecimal objects, otherwise
+                // we risk losing either precision or number of digits
+                // so just collect, don't map and aggregate (yet)
+                .collect(Collectors.toSet());
+        System.out.println("=== Rank Incoming (Sell) ===");
+        aggregateSumByEntity(sellOrders);
+
+        final Set<ImmutableInstruction> buyOrders = ds.getRows()
+                .stream()
+                .filter(r -> r.getBuySell() == ImmutableInstruction.BUYSELL.B)
+                // it would be nice to use mapToDouble (or ideally a new mapToBigDecimal) at this point, but we can't
+                // so we drop the java 8 lambda aggregation and process individual BigDecimal objects, otherwise
+                // we risk losing either precision or number of digits
+                // so just collect, don't map and aggregate (yet)
+                .collect(Collectors.toSet());
+        System.out.println("=== Rank Outgoing (Buy) ===");
+        aggregateSumByEntity(buyOrders);
+
+    }
+
+    int dataRowsLoaded() {
+        return ds.getRowsCount();
+    }
+
+    Map<LocalDate, BigDecimal> aggregateSumPerDay(Set<ImmutableInstruction> orders) {
+        final Map<LocalDate, BigDecimal> dateToSumPerDay = new TreeMap<>(); // ordering on keys
+        for (final ImmutableInstruction in : orders) {
+            BigDecimal existingAmount = dateToSumPerDay.get(in.getSettlementDate());
+            if (existingAmount == null) {
+                existingAmount = BigDecimal.ZERO;
+            }
+            dateToSumPerDay.put(in.getSettlementDate(), existingAmount.add(in.getAmountOfTradeUSD()));
+        }
+
+        for (final Map.Entry<LocalDate, BigDecimal> e : dateToSumPerDay.entrySet()) {
+            System.out.println(e.getKey()+" => "+nf.format(e.getValue()));
+        }
+        return dateToSumPerDay;
+    }
+
+    Map<DataSource.ENTITIES, BigDecimal> aggregateSumByEntity(Set<ImmutableInstruction> orders) {
+        final Map<DataSource.ENTITIES, BigDecimal> entityToSumPerDay = new LinkedHashMap<>();
+        for (final ImmutableInstruction in : orders) {
+            BigDecimal existingAmount = entityToSumPerDay.get(in.getEntity());
+            if (existingAmount == null) {
+                existingAmount = BigDecimal.ZERO;
+            }
+            entityToSumPerDay.put(in.getEntity(), existingAmount.add(in.getAmountOfTradeUSD()));
+        }
+
+        final Map<DataSource.ENTITIES, BigDecimal> sortedMap = sortByValueDesc(entityToSumPerDay);
+        int c = 1;
+        for (final Map.Entry<DataSource.ENTITIES, BigDecimal> e : sortedMap.entrySet()) {
+            System.out.println((c++)+". "+e.getKey()+" => "+nf.format(e.getValue()));
+        }
+        return entityToSumPerDay;
+    }
+
+    /**
+     * Sort by value (descending)
+     * @param unsortedMap
+     * @return Map sorted by value
+     */
+    private Map<DataSource.ENTITIES, BigDecimal> sortByValueDesc (Map<DataSource.ENTITIES, BigDecimal> unsortedMap) {
+        // prepare the treemap with the appropriate value.compareTo(value) comparator:
+        final Map<DataSource.ENTITIES, BigDecimal> sortedMap = new TreeMap<>(new ValueComparator(unsortedMap));
+        // fill it will all the unsorted entries
+        sortedMap.putAll(unsortedMap);
+        return sortedMap;
+    }
+
+    class ValueComparator<K, V extends Comparable<V>> implements Comparator<K>{
+
+        final Map<K, V> map = new HashMap<>();
+
+        public ValueComparator(Map<K, V> map){
+            this.map.putAll(map);
+        }
+
+        @Override
+        public int compare(K o1, K o2) {
+            return -map.get(o1).compareTo(map.get(o2));//descending order
+        }
+    }
+
+}
