@@ -13,9 +13,6 @@ import java.util.stream.Collectors;
  * Daily Trade Reporting Engine to process instructions sent by various clients
  * to JP Morgan to execute in the international market.
  *
- * https://gist.github.com/bgun/c7447ab0906517221b6b
- * git@github.com:picttarge/jpmorgan.git
- *
  * Guidelines:
  * - No database or UI is required.
  * - Assume the code will only ever be executed in a single threaded environment.
