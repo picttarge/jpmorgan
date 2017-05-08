@@ -2,10 +2,7 @@ package com.jpmorgan.dtre;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 
 import static java.time.temporal.TemporalAdjusters.nextOrSame;
@@ -18,6 +15,7 @@ import static java.time.temporal.TemporalAdjusters.nextOrSame;
  */
 public final class WorkingWeek {
 
+    private final static DayOfWeek defaultFirstDayOfWeek = DayOfWeek.MONDAY;
     /**
      * Weekend (Holiday) definition for Monday to Friday, inclusive
      */
@@ -55,7 +53,7 @@ public final class WorkingWeek {
         if (isWeekendByCurrency(currency, date)) {
             return ADJUSTMENTBUREAU.containsKey(currency)
                     ? date.with(nextOrSame(ADJUSTMENTBUREAU.get(currency))) // adjust according to currency
-                    : date.with(nextOrSame(DayOfWeek.MONDAY)); // or default
+                    : date.with(nextOrSame(defaultFirstDayOfWeek)); // or default
         } else {
             return date; // no change
         }
@@ -76,6 +74,20 @@ public final class WorkingWeek {
     }
 
     static DayOfWeek getFirstDayOfWeek(ISO4217.Currency currency) {
-        return ADJUSTMENTBUREAU.get(currency);
+        DayOfWeek dow = ADJUSTMENTBUREAU.get(currency);
+        if (dow == null) {
+            dow = defaultFirstDayOfWeek;
+        }
+        return dow;
+    }
+
+    /**
+     * Used in tests, but note keySet is wrapped so we cannot modify ADJUSTMENTBUREAU
+     * @return List<ISO4217.Currency> List of special-case currencies
+     */
+    static List<ISO4217.Currency> getAdjustedCurrencies() {
+        final List<ISO4217.Currency> list = new ArrayList<>();
+        list.addAll(ADJUSTMENTBUREAU.keySet());
+        return list;
     }
 }

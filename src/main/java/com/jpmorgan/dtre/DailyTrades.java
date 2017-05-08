@@ -7,6 +7,7 @@ import java.math.BigDecimal;
 import java.text.NumberFormat;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
@@ -146,6 +147,13 @@ public class DailyTrades {
         return ds.getRowsCount();
     }
 
+    /**
+     * Prints out a list of aggregate 'AmountOfTradeUSD' by date, sorted by date.
+     * Note: Operates on the entire list of sample data (no defined date range)
+     *       and will not print a date with $0.00, if no data exist
+     * @param orders Pre-filtered Set of ImmutableInstruction objects to take into account
+     * @return Map<LocalDate, BigDecimal> (TreeMap) in natural date order of date-to-sum-USD-trade
+     */
     Map<LocalDate, BigDecimal> aggregateSumPerDay(Set<ImmutableInstruction> orders) {
         final Map<LocalDate, BigDecimal> dateToSumPerDay = new TreeMap<>(); // ordering on keys
         for (final ImmutableInstruction in : orders) {
@@ -163,7 +171,7 @@ public class DailyTrades {
     }
 
     Map<DataSource.ENTITIES, BigDecimal> aggregateSumByEntity(Set<ImmutableInstruction> orders) {
-        final Map<DataSource.ENTITIES, BigDecimal> entityToSumPerDay = new LinkedHashMap<>();
+        final Map<DataSource.ENTITIES, BigDecimal> entityToSumPerDay = new HashMap<>();
         for (final ImmutableInstruction in : orders) {
             BigDecimal existingAmount = entityToSumPerDay.get(in.getEntity());
             if (existingAmount == null) {
@@ -172,39 +180,54 @@ public class DailyTrades {
             entityToSumPerDay.put(in.getEntity(), existingAmount.add(in.getAmountOfTradeUSD()));
         }
 
-        final Map<DataSource.ENTITIES, BigDecimal> sortedMap = sortByValueDesc(entityToSumPerDay);
-        int c = 1;
-        for (final Map.Entry<DataSource.ENTITIES, BigDecimal> e : sortedMap.entrySet()) {
-            System.out.println((c++)+". "+e.getKey()+" => "+nf.format(e.getValue()));
-        }
+
+        // Java 8: sort this, by value, descending (.reversed())
+        final AtomicInteger rank = new AtomicInteger(1);
+        entityToSumPerDay.entrySet().stream()
+                .sorted(Map.Entry.<DataSource.ENTITIES, BigDecimal>comparingByValue().reversed())
+                .forEach(e -> System.out.println(rank.getAndAdd(1) + ". " + e.getKey() + " => " + nf.format(e.getValue())));
+
+        // Java 7: sort this, by value, descending
+//        final Map<DataSource.ENTITIES, BigDecimal> sortedMap = sortByValueDesc(entityToSumPerDay);
+//        int c = 1;
+//        for (final Map.Entry<DataSource.ENTITIES, BigDecimal> e : sortedMap.entrySet()) {
+//            System.out.println((c++)+". "+e.getKey()+" => "+nf.format(e.getValue()));
+//        }
+
         return entityToSumPerDay;
     }
 
-    /**
-     * Sort by value (descending)
-     * @param unsortedMap
-     * @return Map sorted by value
-     */
-    private Map<DataSource.ENTITIES, BigDecimal> sortByValueDesc (Map<DataSource.ENTITIES, BigDecimal> unsortedMap) {
-        // prepare the treemap with the appropriate value.compareTo(value) comparator:
-        final Map<DataSource.ENTITIES, BigDecimal> sortedMap = new TreeMap<>(new ValueComparator(unsortedMap));
-        // fill it will all the unsorted entries
-        sortedMap.putAll(unsortedMap);
-        return sortedMap;
-    }
-
-    class ValueComparator<K, V extends Comparable<V>> implements Comparator<K>{
-
-        final Map<K, V> map = new HashMap<>();
-
-        public ValueComparator(Map<K, V> map){
-            this.map.putAll(map);
-        }
-
-        @Override
-        public int compare(K o1, K o2) {
-            return -map.get(o1).compareTo(map.get(o2));//descending order
-        }
-    }
+//    Java 7: shown here for information in the assessment only, wouldn't leave so-called "zombie code" lying around production
+//    /**
+//     * Sort by value (descending) specifically for a map of DataSource.ENTITIES to BigDecimal
+//     * Note: Operates on the entire list of sample data (no defined date range)
+//     *       and will not print an entity with $0.00 sum total USD trade, if no data exist
+//     * @param unsortedMap Map<DataSource.ENTITIES, BigDecimal>
+//     * @return Map sorted by value, mapping ENTITIES to sum total USD trade
+//     */
+//    private Map<DataSource.ENTITIES, BigDecimal> sortByValueDesc (Map<DataSource.ENTITIES, BigDecimal> unsortedMap) {
+//        // prepare the treemap with the appropriate value.compareTo(value) comparator:
+//        final Map<DataSource.ENTITIES, BigDecimal> sortedMap = new TreeMap<>(new ValueComparator(unsortedMap));
+//        // fill it will all the unsorted entries
+//        sortedMap.putAll(unsortedMap);
+//        return sortedMap;
+//    }
+//
+//    /**
+//     * Comparator for use with TreeMap which will sort by value, rather than key (by default)
+//     */
+//    class ValueComparator<K, V extends Comparable<V>> implements Comparator<V>{
+//
+//        final Map<K, V> map;
+//
+//        public ValueComparator(Map<K, V> map){
+//            this.map = map;
+//        }
+//
+//        @Override
+//        public int compare(V o1, V o2) {
+//            return -map.get(o1).compareTo(map.get(o2));//descending order
+//        }
+//    }
 
 }
